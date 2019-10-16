@@ -5,7 +5,7 @@ echo "Deployment name: $2"
 gcloud deployment-manager deployments describe $2 --project=$1 >/dev/null 2>&1
 result=$?
 
-if [[ $result -ne 0 ]]; then
+if [ $result -ne 0 ]; then
   gcloud deployment-manager deployments create $2 --config config.yaml
 else
   gcloud deployment-manager deployments update $2 --config config.yaml
