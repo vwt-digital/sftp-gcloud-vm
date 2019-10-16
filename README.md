@@ -8,6 +8,6 @@ Create static IP address first and add it to config.yaml:
 
 When ready, deploy with the following command:
 
-    gcloud deployment-manager deployments create "DEPLOYMENT_NAME" --config config.yaml
+    deploy.sh "PROJECT_ID" "DEPLOYMENT_NAME"
 
 ![SFTP gcloud](sftp-gcloud.svg)

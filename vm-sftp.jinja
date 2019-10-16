@@ -5,19 +5,22 @@
 {%- set port = properties["port"] -%}
 {%- set zone = properties["zone"] -%}
 {%- set ip = properties["ip"] -%}
+{%- set egress = properties["egress"] -%}
 {%- set machineType = properties["machineType"] -%}
 {%- set bucket = properties["bucket"] -%}
 {%- set sftpUser = properties["sftpUser"] -%}
 {%- set publicKey = properties["publicKey"] -%}
 {%- set whitelist = properties["whitelist"] -%}
-{%- set serviceAccountId = properties["serviceAccountId"] -%}
+{%- set serviceAccount = properties["serviceAccount"] -%}
+{%- set createServiceAccount = properties["createServiceAccount"] -%}
 
 resources:
-- name: {{ project }}-sftp-sa
+{% if createServiceAccount %}
+- name: {{ serviceAccount }}
   type: iam.v1.serviceAccount
   properties:
-    accountId: {{ project }}-sftp-sa
-    displayName: {{ project }}-sftp-sa service account
+    accountId: {{ serviceAccount }}
+    displayName: {{ serviceAccount }} service account
     projectId: {{ project }}
 
 - name: get-iam-policy
@@ -37,7 +40,8 @@ resources:
       add:
       - role: roles/storage.objectCreator
         members:
-        - serviceAccount:$(ref.{{ project }}-sftp-sa.email)
+        - serviceAccount:{{ serviceAccount }}@{{ project }}.iam.gserviceaccount.com
+{% endif %}
 
 - name: {{ project }}-vn
   type: compute.v1.network
@@ -63,7 +67,7 @@ resources:
     zone: {{ zone }}
     machineType: {{ COMPUTE_URL_BASE }}/projects/{{ project }}/zones/{{ zone }}/machineTypes/f1-micro
     serviceAccounts:
-    - email: $(ref.{{ project }}-sftp-sa.email)
+    - email: {{ serviceAccount }}@{{ project }}.iam.gserviceaccount.com
       scopes: {{ scopes }}
     metadata:
       items:
@@ -130,6 +134,12 @@ resources:
           EOF
 
           service sshd restart
+
+          {% if egress -%}
+            mkdir -p /data/sftp/egress
+            chown ${USER}:sftponly /data/sftp/egress
+            chmod ug+rwX /data/sftp/egress
+          {%- endif %}
 
     disks:
     - deviceName: boot

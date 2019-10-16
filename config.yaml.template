@@ -12,6 +12,9 @@ resources:
     zone:
     ip:
     port:
+    egress: true
+    serviceAccount:
+    createServiceAccount:
     scopes:
       - https://www.googleapis.com/auth/cloud-platform
     bucket:
