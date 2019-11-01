@@ -1,0 +1,24 @@
+imports:
+- path: vm-sftp.jinja
+- path: sshd_config
+
+resources:
+- name: vm-sftp-deploy
+  type: vm-sftp.jinja
+  properties:
+    metadata-from-file:
+      sshd_config: sshd_config
+    machineType: f1-micro
+    zone:
+    ip:
+    port:
+    egress: true
+    serviceAccount:
+    createServiceAccount:
+    scopes:
+      - https://www.googleapis.com/auth/cloud-platform
+    bucket:
+    sftpUser:
+    publicKey:
+    whitelist:
+      - 0.0.0.0/0

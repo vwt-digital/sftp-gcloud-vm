@@ -1,0 +1,163 @@
+{%- set COMPUTE_URL_BASE = 'https://www.googleapis.com/compute/v1' -%}
+{%- set project = env["project"] -%}
+{%- set projectId = properties["projectId"] -%}
+{%- set scopes = properties["scopes"] -%}
+{%- set port = properties["port"] -%}
+{%- set zone = properties["zone"] -%}
+{%- set ip = properties["ip"] -%}
+{%- set egress = properties["egress"] -%}
+{%- set machineType = properties["machineType"] -%}
+{%- set bucket = properties["bucket"] -%}
+{%- set sftpUser = properties["sftpUser"] -%}
+{%- set publicKey = properties["publicKey"] -%}
+{%- set whitelist = properties["whitelist"] -%}
+{%- set serviceAccount = properties["serviceAccount"] -%}
+{%- set createServiceAccount = properties["createServiceAccount"] -%}
+
+resources:
+{% if createServiceAccount %}
+- name: {{ serviceAccount }}
+  type: iam.v1.serviceAccount
+  properties:
+    accountId: {{ serviceAccount }}
+    displayName: {{ serviceAccount }} service account
+    projectId: {{ project }}
+
+- name: get-iam-policy
+  action: gcp-types/cloudresourcemanager-v1:cloudresourcemanager.projects.getIamPolicy
+  properties:
+    resource: {{ project }}
+  metadata:
+    runtimePolicy:
+    - 'UPDATE_ALWAYS'
+
+- name: patch-iam-policy
+  action: gcp-types/cloudresourcemanager-v1:cloudresourcemanager.projects.setIamPolicy
+  properties:
+    resource: {{ project }}
+    policy: $(ref.get-iam-policy)
+    gcpIamPolicyPatch:
+      add:
+      - role: roles/storage.objectCreator
+        members:
+        - serviceAccount:{{ serviceAccount }}@{{ project }}.iam.gserviceaccount.com
+{% endif %}
+
+- name: {{ project }}-vn
+  type: compute.v1.network
+  properties:
+    autoCreateSubnetworks: true
+
+- name: {{ project }}-fw
+  type: compute.v1.firewall
+  properties:
+    network: $(ref.{{ project }}-vn.selfLink)
+    sourceRanges:
+    {% for ip in whitelist %}
+    - {{ ip }}
+    {% endfor %}
+    allowed:
+    - IPProtocol: TCP
+      ports:
+      - {{ port }}
+
+- type: compute.v1.instance
+  name: {{ project }}-vm
+  properties:
+    zone: {{ zone }}
+    machineType: {{ COMPUTE_URL_BASE }}/projects/{{ project }}/zones/{{ zone }}/machineTypes/f1-micro
+    serviceAccounts:
+    - email: {{ serviceAccount }}@{{ project }}.iam.gserviceaccount.com
+      scopes: {{ scopes }}
+    metadata:
+      items:
+      - key: startup-script
+        value: |
+          #! /bin/bash
+          PUBLIC_KEY="{{ publicKey }}"
+          BUCKET="{{ bucket }}"
+          USER="{{ sftpUser }}"
+          USER_ID=1055
+          GROUP_ID=1055
+          PASS=B4eNjKNB6kw2Ez7EJxEfvG
+
+          apt-get update -y && apt-get install -y \
+          	apt-utils incron gettext \
+          	&& mkdir -p /data/authorized_keys \
+            && mkdir -p /data/sftp \
+          	&& apt-get clean \
+            && apt-get autoremove \
+          	&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+          	&& mkdir /ssh/ \
+            && rm -f /etc/incron.allow
+
+          # Add user if it does not exist
+          if id -u $USER > /dev/null 2>&1; then
+              echo "INFO: User ${USER} already exists"
+          else
+              echo "INFO: User ${USER} does not exists, we create it"
+              ENC_PASS=$(perl -e 'print crypt($ARGV[0], "password")' ${PASS})
+
+              addgroup --gid ${GROUP_ID} sftponly
+              useradd -d /data/sftp -m -g sftponly -p ${ENC_PASS} -u ${USER_ID} -s /bin/false ${USER}
+              usermod -aG sftponly ${USER}
+
+              # Create writeable directory
+              chown root /data/sftp
+              chmod go-w /data/sftp
+              mkdir -p /data/sftp/ingress
+              chown ${USER}:sftponly /data/sftp/ingress
+              chmod ug+rwX /data/sftp/ingress
+
+              if [ ! -f "/data/authorized_keys/${USER}" ]; then
+                  touch /data/authorized_keys/${USER}
+                  echo ${PUBLIC_KEY} >> /data/authorized_keys/${USER}
+                  chown ${USER}:${GROUP} /data/authorized_keys/${USER}
+                  cat /data/authorized_keys/${USER}
+              fi
+          fi
+
+          # Automatically login service account
+          { echo 1; echo 1; echo n; } | gcloud init
+
+          # Write to incron file
+          if [ ! -f "/etc/incron.d/gcs" ]; then
+              echo '/data/sftp/ingress IN_CLOSE_WRITE gsutil mv $@/$# gs://'${BUCKET} >> /etc/incron.d/gcs
+              service incron restart
+          fi
+
+          rm /etc/ssh/sshd_config
+          cat << EOF > /etc/ssh/sshd_config
+          {% for key, value in properties['metadata-from-file'].iteritems() -%}
+            {{ imports[value]|indent(10) }}
+          {%- endfor %}
+          EOF
+
+          service sshd restart
+
+          {% if egress -%}
+            mkdir -p /data/sftp/egress
+            chown ${USER}:sftponly /data/sftp/egress
+            chmod ug+rwX /data/sftp/egress
+          {%- endif %}
+
+    disks:
+    - deviceName: boot
+      type: PERSISTENT
+      boot: true
+      autoDelete: true
+      initializeParams:
+        sourceImage: {{ COMPUTE_URL_BASE }}/projects/debian-cloud/global/images/family/debian-9
+    networkInterfaces:
+    - network: $(ref.{{ project }}-vn.selfLink)
+      # Access Config required to give the instance a public IP address
+      accessConfigs:
+      - name: External NAT
+        type: ONE_TO_ONE_NAT
+        natIP: {{ ip }}
+    scheduling:
+      automaticRestart: true
+
+outputs:
+- name: instanceIP
+  value: $(ref.{{ project }}-vm.networkInterfaces[0].accessConfigs[0].natIP)
