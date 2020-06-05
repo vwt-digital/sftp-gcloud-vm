@@ -128,7 +128,7 @@ resources:
 
           rm /etc/ssh/sshd_config
           cat << EOF > /etc/ssh/sshd_config
-          {% for key, value in properties['metadata-from-file'].iteritems() -%}
+          {% for key, value in properties['metadata-from-file'].items() -%}
             {{ imports[value]|indent(10) }}
           {%- endfor %}
           EOF
